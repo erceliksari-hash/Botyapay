@@ -1,0 +1,6 @@
+ccxt
+pandas
+yfinance
+pandas_ta
+plotly
+streamlit-autorefresh
