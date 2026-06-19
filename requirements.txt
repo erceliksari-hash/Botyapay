@@ -1,6 +1,6 @@
-streamlit
 ccxt
 pandas
 yfinance
-streamlit-autorefresh
+pandas_ta
 plotly
+streamlit-autorefresh
