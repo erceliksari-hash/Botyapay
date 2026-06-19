@@ -39,7 +39,7 @@ class BotMerkezi:
             else: return "BEKLE"
         except: return "VERİ YOK"
 
-    # 🔥 5 Dakikalık Zaman Diliminde Hızlı Scalp İndikatörü (5/13 EMA)
+    # 🎯 5 Dakikalık Zaman Diliminde Hızlı Scalp İndikatörü (5/13 EMA)
     def scalp_analiz_et(self, sembol):
         try:
             if "/" in sembol:
@@ -64,7 +64,7 @@ class BotMerkezi:
             return yf.Ticker(sembol).history(period="1d")['Close'].iloc[-1]
         except: return 0
 
-    # 🔥 Grafik Çizimi İçin Geçmiş Veriyi Çeken Fonksiyon
+    # 🖼️ Grafik Çizimi İçin Geçmiş Veriyi Çeken Fonksiyon
     def grafik_verisi_al(self, sembol):
         try:
             if "/" in sembol:
@@ -154,4 +154,41 @@ with col2:
         fiyat = bot.fiyat_al(s)
         
         # TradingView için temiz link üretici
-        tv_id =
+        tv_id = s.replace("/USDT", "USDT")
+        tv_link = f"https://www.tradingview.com/symbols/{tv_id}/"
+        
+        piyasa_verileri.append({
+            "Sembol": s, 
+            "Fiyat (USDT)": round(fiyat, 2), 
+            "Ana Trend (1h)": ana_sinyal,
+            "Scalp Sinyali (5m)": scalp_sinyal,
+            "Grafik Linki": tv_link
+        })
+    
+    df_goster = pd.DataFrame(piyasa_verileri)
+    
+    # Canlı takip tablosu ve harici link sütunu
+    st.dataframe(
+        df_goster, 
+        use_container_width=True,
+        column_config={
+            "Grafik Linki": st.column_config.LinkColumn("🔗 Harici Grafik", display_text="TradingView'da Aç")
+        }
+    )
+
+    # 🖼️ Uygulama İçi Canlı Grafik Gösterme Paneli
+    st.write("---")
+    st.header("🖼️ Canlı Grafik İzleyici")
+    secilen_grafik = st.selectbox("Grafiğini görmek istediğiniz varlığı seçin:", bot.takip_listesi)
+    
+    if secilen_grafik:
+        g_data = bot.grafik_verisi_al(secilen_grafik)
+        if g_data is not None and not g_data.empty:
+            st.line_chart(g_data, use_container_width=True)
+        else:
+            st.warning("Grafik verisi şu an yüklenemedi, lütfen az sonra tekrar deneyin.")
+
+    st.write("---")
+    st.header("📜 Bot İşlem Günlüğü (Logs)")
+    for log in reversed(bot.loglar[-15:]):
+        st.info(log)
