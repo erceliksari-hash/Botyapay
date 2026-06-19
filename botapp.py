@@ -39,7 +39,7 @@ class BotMerkezi:
             else: return "BEKLE"
         except: return "VERİ YOK"
 
-    # 🔥 YENİ: 5 Dakikalık Zaman Diliminde Hızlı Scalp İndikatörü (5/13 EMA)
+    # 🔥 5 Dakikalık Zaman Diliminde Hızlı Scalp İndikatörü (5/13 EMA)
     def scalp_analiz_et(self, sembol):
         try:
             if "/" in sembol:
@@ -64,7 +64,7 @@ class BotMerkezi:
             return yf.Ticker(sembol).history(period="1d")['Close'].iloc[-1]
         except: return 0
 
-    # 🔥 YENİ: Grafik Çizimi İçin Geçmiş Veriyi Çeken Fonksiyon
+    # 🔥 Grafik Çizimi İçin Geçmiş Veriyi Çeken Fonksiyon
     def grafik_verisi_al(self, sembol):
         try:
             if "/" in sembol:
@@ -150,22 +150,8 @@ with col2:
     piyasa_verileri = []
     for s in bot.takip_listesi:
         ana_sinyal = bot.analiz_et(s)
-        scalp_sinyal = bot.scalp_analiz_et(s)  # 🔥 Yeni İndikatör Çağrısı
+        scalp_sinyal = bot.scalp_analiz_et(s)
         fiyat = bot.fiyat_al(s)
         
-        # 🔥 Yeni: TradingView için temiz link üretici
-        tv_id = s.replace("/USDT", "USDT")
-        tv_link = f"https://www.tradingview.com/symbols/{tv_id}/"
-        
-        piyasa_verileri.append({
-            "Sembol": s, 
-            "Fiyat (USDT)": round(fiyat, 2), 
-            "Ana Trend (1h)": ana_sinyal,
-            "Scalp Sinyali (5m)": scalp_sinyal, # 🔥 Yeni Sütun
-            "Grafik Linki": tv_link # 🔥 Tıklanabilir Link Sütunu
-        })
-    
-    df_goster = pd.DataFrame(piyasa_verileri)
-    
-    # Sütunu tıklanabilir internet linkine dönüştüren özel Streamlit ayarı
-    st.dataframe(
+        # TradingView için temiz link üretici
+        tv_id =
