@@ -5,8 +5,8 @@ import yfinance as yf
 import threading
 import time
 
-# Sayfa Genişlik Ayarı
-st.set_page_config(layout="wide", page_title="Borsa Ajanı Pro")
+# Sayfa Genişlik ve Tema Ayarı
+st.set_page_config(layout="wide", page_title="Borsa Ajanı Pro v2", page_icon="📊")
 
 # =================================================================
 # 🧠 KÜRESEL HAFIZA (Botun Durumunu ve Cüzdanı Korumak İçin)
@@ -34,10 +34,10 @@ class BotMerkezi:
             else:
                 df = yf.Ticker(sembol).history(period="5d", interval="1h").rename(columns={"Close":"c"})
             rsi = self.rsi_hesapla(df['c']).iloc[-1]
-            if rsi < 35: return "GÜÇLÜ AL"
-            elif rsi > 65: return "GÜÇLÜ SAT"
-            else: return "BEKLE"
-        except: return "VERİ YOK"
+            if rsi < 35: return "🟢 GÜÇLÜ AL"
+            elif rsi > 65: return "🔴 GÜÇLÜ SAT"
+            else: return "⚪ BEKLE"
+        except: return "❔ VERİ YOK"
 
     # 🎯 5 Dakikalık Zaman Diliminde Hızlı Scalp İndikatörü (5/13 EMA)
     def scalp_analiz_et(self, sembol):
@@ -52,30 +52,38 @@ class BotMerkezi:
             df['ema13'] = df['c'].ewm(span=13, adjust=False).mean()
             
             if df['ema5'].iloc[-1] > df['ema13'].iloc[-1]:
-                return "🎯 SCALP AL (Yükseliş)"
+                return "🎯 SCALP AL"
             else:
-                return "📉 SCALP SAT (Düşüş)"
+                return "📉 SCALP SAT"
         except:
-            return "VERİ YOK"
+            return "❔ VERİ YOK"
+
+    # 🔥 KENDİ İNDİKATÖRÜNÜ GRAFİĞE EKLEME ALANI
+    # Bu fonksiyon grafik ekranına basılacak olan veri tablosunu hazırlar.
+    def grafik_verisi_al(self, sembol):
+        try:
+            if "/" in sembol:
+                df = pd.DataFrame(self.binance.fetch_ohlcv(sembol, '5m', limit=50), columns=['t','o','h','l','c','v'])
+                df['Zaman'] = pd.to_datetime(df['t'], unit='ms')
+                df = df.set_index('Zaman')
+                df['Fiyat'] = df['c']
+            else:
+                df = yf.Ticker(sembol).history(period="1d", interval="5m").rename(columns={"Close":"Fiyat"})
+            
+            # Kendi indikatör seviyelerini burada hesaplayıp tabloya ekliyoruz:
+            df['Scalp EMA 5'] = df['Fiyat'].ewm(span=5, adjust=False).mean()
+            df['Scalp EMA 13'] = df['Fiyat'].ewm(span=13, adjust=False).mean()
+            
+            # 💡 İleride buraya df['BenimIndikatorum'] = ... yazarak grafiğe yeni çizgiler ekleyebilirsin!
+            return df[['Fiyat', 'Scalp EMA 5', 'Scalp EMA 13']]
+        except:
+            return None
 
     def fiyat_al(self, sembol):
         try:
             if "/" in sembol: return self.binance.fetch_ticker(sembol)['last']
             return yf.Ticker(sembol).history(period="1d")['Close'].iloc[-1]
         except: return 0
-
-    # 🖼️ Grafik Çizimi İçin Geçmiş Veriyi Çeken Fonksiyon
-    def grafik_verisi_al(self, sembol):
-        try:
-            if "/" in sembol:
-                df = pd.DataFrame(self.binance.fetch_ohlcv(sembol, '5m', limit=50), columns=['t','o','h','l','c','v'])
-                df['Zaman'] = pd.to_datetime(df['t'], unit='ms')
-                return df.set_index('Zaman')[['c']].rename(columns={'c': 'Fiyat'})
-            else:
-                df = yf.Ticker(sembol).history(period="1d", interval="5m").rename(columns={"Close":"Fiyat"})
-                return df[['Fiyat']]
-        except:
-            return None
 
 # Hafıza Nesnesini Çağır
 bot = BotMerkezi()
@@ -92,7 +100,7 @@ def arka_plan_motoru(bot_nesnesi):
             if fiyat == 0: continue
 
             # Otomatik Alım Stratejisi
-            if karar == "GÜÇLÜ AL":
+            if "GÜÇLÜ AL" in karar:
                 islem_tutari = 5000.0
                 if bot_nesnesi.cuzdan["USDT"] >= islem_tutari:
                     miktar = islem_tutari / fiyat
@@ -101,7 +109,7 @@ def arka_plan_motoru(bot_nesnesi):
                     bot_nesnesi.loglar.append(f"✅ [OTOMATİK AL]: {round(miktar,4)} adet {sembol} alındı. Fiyat: {fiyat} USDT")
 
             # Otomatik Satım Stratejisi
-            elif karar == "GÜÇLÜ SAT" and bot_nesnesi.cuzdan["VARLIKLAR"].get(sembol, 0) > 0:
+            elif "GÜÇLÜ SAT" in karar and bot_nesnesi.cuzdan["VARLIKLAR"].get(sembol, 0) > 0:
                 miktar = bot_nesnesi.cuzdan["VARLIKLAR"][sembol]
                 toplam_gelir = miktar * fiyat
                 bot_nesnesi.cuzdan["USDT"] += toplam_gelir
@@ -116,79 +124,89 @@ if "motor_calisiyor" not in st.session_state:
 # =================================================================
 # 📊 STREAMLIT KULLANICI ARAYÜZÜ (UI)
 # =================================================================
-st.title("📊 Borsa Ajanı Pro — Otomatik Ticaret Paneli")
+st.subheader("🤖 BORSA AJANI PRO — Gelişmiş Algoritmik İşlem Paneli")
 
-col1, col2 = st.columns([1, 2])
+# Düzen: Sol Panel (Cüzdan ve Kontroller) | Sağ Panel (Görsel Sekmeler)
+col1, col2 = st.columns([1, 3], gap="large")
 
-# Sol Panel: Cüzdan ve Kontroller
 with col1:
-    st.header("💰 Cüzdan Durumu")
-    st.metric(label="Nakit (USDT)", value=f"{round(bot.cuzdan['USDT'], 2)} $")
+    st.markdown("### 💰 Portföy Durumu")
+    st.metric(label="Kullanılabilir Nakit", value=f"{round(bot.cuzdan['USDT'], 2)} USDT", delta="Simülasyon Aktif")
     
-    st.subheader("📦 Sahip Olunan Varlıklar")
-    for varlik, miktar in bot.cuzdan["VARLIKLAR"].items():
-        if miktar > 0:
-            st.write(f"**{varlik}:** {round(miktar, 4)} adet")
+    with st.expander("📦 Sahip Olunan Varlıklar", expanded=True):
+        aktif_varlik_var_mi = False
+        for varlik, miktar in bot.cuzdan["VARLIKLAR"].items():
+            if miktar > 0:
+                st.write(f"**{varlik}:** `{round(miktar, 4)}` adet")
+                aktif_varlik_var_mi = True
+        if not aktif_varlik_var_mi:
+            st.caption("Henüz alım yapılmış bir varlık bulunmuyor.")
 
     st.write("---")
-    st.subheader("➕ Yeni Varlık Ekle")
-    yeni_sembol = st.text_input("Örn: AAPL veya SOL/USDT").upper()
-    if st.button("Listeye Ekle") and yeni_sembol:
+    st.markdown("### ➕ İzleme Listesine Ekle")
+    yeni_sembol = st.text_input("Örn: AAPL, TSLA veya SOL/USDT", placeholder="Sembol girin...").upper()
+    if st.button("📌 Listeye Sabitle", use_container_width=True) and yeni_sembol:
         if yeni_sembol not in bot.takip_listesi:
             bot.takip_listesi.append(yeni_sembol)
-            st.success(f"{yeni_sembol} başarıyla eklendi!")
+            st.success(f"{yeni_sembol} listeye eklendi!")
             st.rerun()
 
-# Sağ Panel: Canlı Takip Listesi, Grafikler ve Loglar
 with col2:
-    st.header("📈 Canlı İzleme & Sinyal Paneli")
-    
-    if st.button("🔄 Verileri Yenile"):
-        st.rerun()
+    # 👑 PREMIUM TAB TASARIMI
+    tab1, tab2, tab3 = st.tabs(["📈 Canlı Sinyal Masası", "🔍 Gelişmiş Grafik Paneli", "📜 İşlem Günlüğü (Logs)"])
 
-    # Tabloyu ve Linkleri Hazırlama
-    piyasa_verileri = []
-    for s in bot.takip_listesi:
-        ana_sinyal = bot.analiz_et(s)
-        scalp_sinyal = bot.scalp_analiz_et(s)
-        fiyat = bot.fiyat_al(s)
+    with tab1:
+        st.markdown("### ⚡ Anlık Piyasa Taraması")
+        if st.button("🔄 Verileri Şimdi Güncelle", use_container_width=True):
+            st.rerun()
+
+        piyasa_verileri = []
+        for s in bot.takip_listesi:
+            ana_sinyal = bot.analiz_et(s)
+            scalp_sinyal = bot.scalp_analiz_et(s)
+            fiyat = bot.fiyat_al(s)
+            
+            tv_id = s.replace("/USDT", "USDT")
+            tv_link = f"https://www.tradingview.com/symbols/{tv_id}/"
+            
+            piyasa_verileri.append({
+                "Sembol": s, 
+                "Anlık Fiyat (USDT)": round(fiyat, 2), 
+                "Ana Trend (1h)": ana_sinyal,
+                "Scalp Durumu (5m)": scalp_sinyal,
+                "Grafik Linki": tv_link
+            })
         
-        # TradingView için temiz link üretici
-        tv_id = s.replace("/USDT", "USDT")
-        tv_link = f"https://www.tradingview.com/symbols/{tv_id}/"
+        df_goster = pd.DataFrame(piyasa_verileri)
+        st.dataframe(
+            df_goster, 
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Grafik Linki": st.column_config.LinkColumn("🔗 Analiz", display_text="TradingView Grafiği")
+            }
+        )
+
+    with tab2:
+        st.markdown("### 📊 İndikatörlü Canlı Çizgi Grafik")
+        secilen_grafik = st.selectbox("İncelemek istediğiniz finansal varlığı seçin:", bot.takip_listesi)
         
-        piyasa_verileri.append({
-            "Sembol": s, 
-            "Fiyat (USDT)": round(fiyat, 2), 
-            "Ana Trend (1h)": ana_sinyal,
-            "Scalp Sinyali (5m)": scalp_sinyal,
-            "Grafik Linki": tv_link
-        })
-    
-    df_goster = pd.DataFrame(piyasa_verileri)
-    
-    # Canlı takip tablosu ve harici link sütunu
-    st.dataframe(
-        df_goster, 
-        use_container_width=True,
-        column_config={
-            "Grafik Linki": st.column_config.LinkColumn("🔗 Harici Grafik", display_text="TradingView'da Aç")
-        }
-    )
+        if secilen_grafik:
+            with st.spinner("Piyasa ve indikatör verileri işleniyor..."):
+                g_data = bot.grafik_verisi_al(secilen_grafik)
+                if g_data is not None and not g_data.empty:
+                    # 💡 Burası hem fiyatı hem de EMA 5 ve EMA 13 indikatör çizgilerini aynı grafikte üst üste çizer!
+                    st.line_chart(g_data, use_container_width=True)
+                    st.caption("💡 *Grafikteki çizgiler: Ham Fiyat seviyenizi ve hesaplanan Scalp İndikatörlerinizin (EMA5 / EMA13) çakışma bölgelerini temsil eder.*")
+                else:
+                    st.error("Grafik verisi alınamadı. Sembolün doğruluğunu veya internet bağlantısını kontrol edin.")
 
-    # 🖼️ Uygulama İçi Canlı Grafik Gösterme Paneli
-    st.write("---")
-    st.header("🖼️ Canlı Grafik İzleyici")
-    secilen_grafik = st.selectbox("Grafiğini görmek istediğiniz varlığı seçin:", bot.takip_listesi)
-    
-    if secilen_grafik:
-        g_data = bot.grafik_verisi_al(secilen_grafik)
-        if g_data is not None and not g_data.empty:
-            st.line_chart(g_data, use_container_width=True)
-        else:
-            st.warning("Grafik verisi şu an yüklenemedi, lütfen az sonra tekrar deneyin.")
-
-    st.write("---")
-    st.header("📜 Bot İşlem Günlüğü (Logs)")
-    for log in reversed(bot.loglar[-15:]):
-        st.info(log)
+    with tab3:
+        st.markdown("### 📜 Robotun Son Karar Mekanizmaları")
+        for log in reversed(bot.loglar[-20:]):
+            if "AL" in log:
+                st.success(log)
+            elif "SAT" in log:
+                st.error(log)
+            else:
+                st.info(log)
