@@ -4,6 +4,8 @@ import pandas as pd
 import yfinance as yf
 import threading
 import time
+import pandas_ta as ta  # 🔥 YENİ: İndikatör hesaplamaları için eklendi
+import plotly.graph_objects as go  # 🔥 YENİ: Mum çubukları ve interaktif grafik için eklendi
 from streamlit_autorefresh import st_autorefresh
 
 # Sayfa Genişlik ve Tema Ayarı
@@ -19,7 +21,7 @@ st_autorefresh(interval=30000, key="bot_refresh")
 class BotMerkezi:
     def __init__(self):
         self.cuzdan = {"USDT": 500000.0, "VARLIKLAR": {}}
-        self.maliyetler = {}  # Alış maliyetlerini izlemek için eklenen havuz
+        self.maliyetler = {}  # 🔥 Alış maliyetlerini izlemek için eklenen havuz
         self.loglar = ["🚀 Otomatik Bot Sistemi Başlatıldı!"]
         self.takip_listesi = ["BTC/USDT", "ETH/USDT", "TSLA", "GC=F"]
         # Sunucu Amerika'da olduğu için engelsiz Kraken borsasını kullanıyoruz
@@ -44,40 +46,61 @@ class BotMerkezi:
             else: return "⚪ BEKLE"
         except: return "❔ VERİ YOK"
 
-    # 🎯 5 Dakikalık Zaman Diliminde Hızlı Scalp İndikatörü (5/13 EMA)
+    # 🎯 5 Dakikalık Zaman Diliminde Gelişmiş Pine Script Scalp İndikatörü (EMA 50 + Stochastic)
     def scalp_analiz_et(self, sembol):
         try:
             if "/" in sembol:
-                df = pd.DataFrame(self.binance.fetch_ohlcv(sembol, '5m', limit=30), columns=['t','o','h','l','c','v'])
+                df = pd.DataFrame(self.binance.fetch_ohlcv(sembol, '5m', limit=100), columns=['t','o','h','l','c','v'])
             else:
-                df = yf.Ticker(sembol).history(period="1d", interval="5m").rename(columns={"Close":"c"})
+                df = yf.Ticker(sembol).history(period="5d", interval="5m").rename(columns={"Open":"o","High":"h","Low":"l","Close":"c","Volume":"v"})
             
-            # EMA Hesaplamaları
-            df['ema5'] = df['c'].ewm(span=5, adjust=False).mean()
-            df['ema13'] = df['c'].ewm(span=13, adjust=False).mean()
+            # 📈 Pine Script Matematik Hesaplamaları
+            df['ema50'] = ta.ema(df['c'], length=50)
+            stoch = ta.stoch(df['h'], df['l'], df['c'], k=14, d=3, smooth_k=3)
+            stoch_k_col = [col for col in stoch.columns if 'STOCHk' in col][0]
+            df['stoch_k'] = stoch[stoch_k_col]
             
-            if df['ema5'].iloc[-1] > df['ema13'].iloc[-1]:
+            son_mum = df.iloc[-1]
+            onceki_mum = df.iloc[-2]
+            
+            # Sinyal Koşulları
+            trend_up = son_mum['c'] > son_mum['ema50']
+            trend_down = son_mum['c'] < son_mum['ema50']
+            
+            long_condition = trend_up and (onceki_mum['stoch_k'] < 20) and (son_mum['stoch_k'] >= 20)
+            short_condition = trend_down and (onceki_mum['stoch_k'] > 80) and (son_mum['stoch_k'] <= 80)
+            
+            if long_condition:
                 return "🎯 SCALP AL"
-            else:
+            elif short_condition:
                 return "📉 SCALP SAT"
+            else:
+                return "⚪ SİNYAL YOK"
         except:
             return "❔ VERİ YOK"
 
-    # 🖼️ Grafik Çizimi İçin Geçmiş Veriyi Çeken Fonksiyon
+    # 🖼️ Grafik Çizimi İçin Geçmiş Veriyi Çeken Fonksiyon (Mum Çubukları ve Sinyaller Dahil)
     def grafik_verisi_al(self, sembol):
         try:
             if "/" in sembol:
-                df = pd.DataFrame(self.binance.fetch_ohlcv(sembol, '5m', limit=50), columns=['t','o','h','l','c','v'])
+                df = pd.DataFrame(self.binance.fetch_ohlcv(sembol, '5m', limit=100), columns=['t','o','h','l','c','v'])
                 df['Zaman'] = pd.to_datetime(df['t'], unit='ms')
                 df = df.set_index('Zaman')
-                df['Fiyat'] = df['c']
+                df = df.rename(columns={"o":"Open", "h":"High", "l":"Low", "c":"Close", "v":"Volume"})
             else:
-                df = yf.Ticker(sembol).history(period="1d", interval="5m").rename(columns={"Close":"Fiyat"})
+                df = yf.Ticker(sembol).history(period="5d", interval="5m")
             
-            df['Scalp EMA 5'] = df['Fiyat'].ewm(span=5, adjust=False).mean()
-            df['Scalp EMA 13'] = df['Fiyat'].ewm(span=13, adjust=False).mean()
+            # İndikatörleri dataframe'e ekliyoruz
+            df['EMA 50'] = ta.ema(df['Close'], length=50)
+            stoch = ta.stoch(df['High'], df['Low'], df['Close'], k=14, d=3, smooth_k=3)
+            stoch_k_col = [col for col in stoch.columns if 'STOCHk' in col][0]
+            df['Stoch K'] = stoch[stoch_k_col]
             
-            return df[['Fiyat', 'Scalp EMA 5', 'Scalp EMA 13']]
+            # Grafik üzerinde ok işaretleri göstermek için sinyal sütunlarını hesapla
+            df['Buy_Signal'] = (df['Close'] > df['EMA 50']) & (df['Stoch K'].shift(1) < 20) & (df['Stoch K'] >= 20)
+            df['Sell_Signal'] = (df['Close'] < df['EMA 50']) & (df['Stoch K'].shift(1) > 80) & (df['Stoch K'] <= 80)
+            
+            return df
         except:
             return None
 
@@ -108,7 +131,7 @@ def arka_plan_motoru(bot_nesnesi):
                     miktar = islem_tutari / fiyat
                     bot_nesnesi.cuzdan["USDT"] -= islem_tutari
                     bot_nesnesi.cuzdan["VARLIKLAR"][sembol] = bot_nesnesi.cuzdan["VARLIKLAR"].get(sembol, 0) + miktar
-                    bot_nesnesi.maliyetler[sembol] = bot_nesnesi.maliyetler.get(sembol, 0.0) + islem_tutari
+                    bot_nesnesi.maliyetler[sembol] = bot_nesnesi.maliyetler.get(sembol, 0.0) + islem_tutari  # Toplam harcanan USDT ekleniyor
                     bot_nesnesi.loglar.append(f"✅ [OTOMATİK AL]: {round(miktar,4)} adet {sembol} alındı. Fiyat: {fiyat} USDT")
 
             # Otomatik Satım Stratejisi
@@ -117,7 +140,7 @@ def arka_plan_motoru(bot_nesnesi):
                 toplam_gelir = miktar * fiyat
                 bot_nesnesi.cuzdan["USDT"] += toplam_gelir
                 bot_nesnesi.cuzdan["VARLIKLAR"][sembol] = 0
-                bot_nesnesi.maliyetler[sembol] = 0.0
+                bot_nesnesi.maliyetler[sembol] = 0.0  # Varlık satıldığı için maliyet sıfırlanıyor
                 bot_nesnesi.loglar.append(f"🚨 [OTOMATİK SAT]: Elindeki tüm {sembol} varlıkları satıldı. Gelir: {round(toplam_gelir,2)} USDT")
 
 if "motor_calisiyor" not in st.session_state:
@@ -141,33 +164,24 @@ with col1:
         aktif_varlik_var_mi = False
         for varlik, miktar in bot.cuzdan["VARLIKLAR"].items():
             if miktar > 0:
+                # Canlı Kâr/Zarar Hesaplama Segmenti
                 fiyat = bot.fiyat_al(varlik)
-                guncel_deger = miktar * price if (fiyat == 0 and 'price' in locals()) else miktar * fiyat
+                guncel_deger = miktar * fiyat
                 toplam_maliyet = bot.maliyetler.get(varlik, 0.0)
                 
+                # Hafıza yenilenmeden önce alınan eski simülasyon varlıkları için koruma filtresi
                 if toplam_maliyet == 0.0:
                     toplam_maliyet = guncel_deger
-                
-                # Maliyet ve Hedef Hesaplamaları
-                giris_fiyati = toplam_maliyet / miktar
-                kar_al_hedef = giris_fiyati * 1.10    # %10 Kâr Al Seviyesi
-                stop_loss_hedef = giris_fiyati * 0.95  # %5 Stop Loss Seviyesi
                 
                 kar_zarar = guncel_deger - toplam_maliyet
                 kar_zarar_yuzde = (kar_zarar / toplam_maliyet) * 100 if toplam_maliyet > 0 else 0
                 
+                # Dinamik Renk ve Gösterge Ayarı
                 renk = "#00cc66" if kar_zarar >= 0 else "#ff3333"
                 ok = "🔺" if kar_zarar >= 0 else "🔻"
                 
-                # UI Gösterimi
                 st.markdown(f"**{varlik}**")
                 st.write(f"Adet: `{round(miktar, 4)}` | Değer: `{round(guncel_deger, 2)} USDT`")
-                st.write(f"Giriş Fiyatı: `{round(giris_fiyati, 2)} USDT`")
-                
-                # 🔥 Al-Sat Hedef Seviyelerinin Varlık Özelinde Gösterilmesi
-                st.markdown(f"🎯 **Kar Al (TP %10):** `{round(kar_al_hedef, 2)} USDT`")
-                st.markdown(f"🛑 **Stop Loss (SL %5):** `{round(stop_loss_hedef, 2)} USDT`")
-                
                 st.markdown(f"<span style='color:{renk}; font-weight:bold;'>{ok} K/Z: {round(kar_zarar, 2)} USDT ({round(kar_zarar_yuzde, 2)}%)</span>", unsafe_allow_html=True)
                 st.markdown("<hr style='margin:10px 0; border:0; border-top:1px solid #444;'/>", unsafe_allow_html=True)
                 aktif_varlik_var_mi = True
@@ -176,24 +190,12 @@ with col1:
 
     st.write("---")
     st.markdown("### ➕ İzleme Listesine Ekle")
-    yeni_sembol = st.text_input("Örn: AAPL, TSLA veya SOL/USDT", placeholder="Sembol girin...", key="ekle_input").upper()
+    yeni_sembol = st.text_input("Örn: AAPL, TSLA veya SOL/USDT", placeholder="Sembol girin...").upper()
     if st.button("📌 Listeye Sabitle", use_container_width=True) and yeni_sembol:
         if yeni_sembol not in bot.takip_listesi:
             bot.takip_listesi.append(yeni_sembol)
             st.success(f"{yeni_sembol} listeye eklendi!")
             st.rerun()
-
-    # ❌ İZLEME LİSTESİNDEN VARLIK ÇIKARMA MODÜLÜ
-    st.write("---")
-    st.markdown("### ❌ İzleme Listesinden Kaldır")
-    if len(bot.takip_listesi) > 0:
-        silinecek_sembol = st.selectbox("Listeden çıkarmak istediğiniz varlığı seçin:", bot.takip_listesi, key="sil_select")
-        if st.button("🗑️ Seçilen Varlığı Kaldır", use_container_width=True):
-            bot.takip_listesi.remove(silinecek_sembol)
-            st.success(f"{silinecek_sembol} başarıyla listeden çıkarıldı.")
-            st.rerun()
-    else:
-        st.caption("Listede çıkarılacak varlık bulunmuyor.")
 
 with col2:
     tab1, tab2, tab3 = st.tabs(["📈 Canlı Sinyal Masası", "🔍 Gelişmiş Grafik Paneli", "📜 İşlem Günlüğü (Logs)"])
@@ -220,34 +222,68 @@ with col2:
                 "Grafik Linki": tv_link
             })
         
-        if piyasa_verileri:
-            df_goster = pd.DataFrame(piyasa_verileri)
-            st.dataframe(
-                df_goster, 
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Grafik Linki": st.column_config.LinkColumn("🔗 Analiz", display_text="TradingView Grafiği")
-                }
-            )
-        else:
-            st.info("İzleme listesi boş. Lütfen yeni bir sembol ekleyin.")
+        df_goster = pd.DataFrame(piyasa_verileri)
+        st.dataframe(
+            df_goster, 
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Grafik Linki": st.column_config.LinkColumn("🔗 Analiz", display_text="TradingView Grafiği")
+            }
+        )
 
     with tab2:
-        st.markdown("### 📊 İndikatörlü Canlı Çizgi Grafik")
-        if len(bot.takip_listesi) > 0:
-            secilen_grafik = st.selectbox("İncelemek istediğiniz finansal varlığı seçin:", bot.takip_listesi, key="grafik_select")
-            
-            if secilen_grafik:
-                with st.spinner("Piyasa ve indikatör verileri işleniyor..."):
-                    g_data = bot.grafik_verisi_al(secilen_grafik)
-                    if g_data is not None and not g_data.empty:
-                        st.line_chart(g_data, use_container_width=True)
-                        st.caption("💡 *Grafikteki çizgiler: Ham Fiyat seviyenizi ve hesaplanan Scalp İndikatörlerinizin (EMA5 / EMA13) çakışma bölgelerini temsil eder.*")
-                    else:
-                        st.error("Grafik verisi alınamadı. Sembolün doğruluğunu veya internet bağlantısını kontrol edin.")
-        else:
-            st.info("Grafik çizilebilecek bir varlık bulunmuyor.")
+        st.markdown("### 📊 İndikatörlü Canlı Mum Grafiği")
+        secilen_grafik = st.selectbox("İncelemek istediğiniz finansal varlığı seçin:", bot.takip_listesi)
+        
+        if secilen_grafik:
+            with st.spinner("Piyasa, Mum çubukları ve indikatörler işleniyor..."):
+                g_data = bot.grafik_verisi_al(secilen_grafik)
+                if g_data is not None and not g_data.empty:
+                    
+                    # 🔥 PLOTLY İLE GELİŞMİŞ MUM GRAFİĞİ TASARIMI
+                    fig = go.Figure()
+                    
+                    # 1. Mum Çubukları (Candlesticks)
+                    fig.add_trace(go.Candlestick(
+                        x=g_data.index, open=g_data['Open'], high=g_data['High'],
+                        low=g_data['Low'], close=g_data['Close'], name="Fiyat"
+                    ))
+                    
+                    # 2. Pine Script Trend Filtresi (EMA 50)
+                    fig.add_trace(go.Scatter(
+                        x=g_data.index, y=g_data['EMA 50'], 
+                        line=dict(color='orange', width=1.5), name="50 EMA"
+                    ))
+                    
+                    # 3. AL Sinyali İşaretçileri (Yeşil Oklar)
+                    buys = g_data[g_data['Buy_Signal']]
+                    fig.add_trace(go.Scatter(
+                        x=buys.index, y=buys['Close'] * 0.995, 
+                        mode='markers', marker=dict(symbol='triangle-up', size=12, color='#00cc66'),
+                        name="Ajan AL"
+                    ))
+                    
+                    # 4. SAT Sinyali İşaretçileri (Kırmızı Oklar)
+                    sells = g_data[g_data['Sell_Signal']]
+                    fig.add_trace(go.Scatter(
+                        x=sells.index, y=sells['Close'] * 1.005, 
+                        mode='markers', marker=dict(symbol='triangle-down', size=12, color='#ff3333'),
+                        name="Ajan SAT"
+                    ))
+                    
+                    # Grafik Arayüz Süslemeleri
+                    fig.update_layout(
+                        xaxis_rangeslider_visible=False,
+                        template="plotly_dark",
+                        height=500,
+                        margin=dict(l=20, r=20, t=20, b=20)
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    st.caption("💡 *Grafikteki üçgenler: Gönderdiğiniz Pine Script kodunun (50 EMA ve Stochastic 14,3,3) ürettiği gerçek scalp kesişim noktalarıdır.*")
+                else:
+                    st.error("Grafik verisi alınamadı. Sembolün doğruluğunu veya internet bağlantısını kontrol edin.")
 
     with tab3:
         st.markdown("### 📜 Robotun Son Karar Mekanizmaları")
