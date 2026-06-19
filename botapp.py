@@ -4,13 +4,14 @@ import pandas as pd
 import yfinance as yf
 import threading
 import time
-from streamlit_autorefresh import st_autorefresh  # <-- 7. SATIRA BU GELİYOR
+from streamlit_autorefresh import st_autorefresh
 
 # Sayfa Genişlik ve Tema Ayarı
 st.set_page_config(layout="wide", page_title="Borsa Ajanı Pro v2", page_icon="📊")
 
-# 🔄 EKRANI HER 30 SANİYEDE BİR OTOMATİK YENİLE (30000 milisaniye)
+# 🔄 EKRANI HER 30 SANİYEDE BİR OTOMATİK YENİLE
 st_autorefresh(interval=30000, key="bot_refresh")
+
 # =================================================================
 # 🧠 KÜRESEL HAFIZA (Botun Durumunu ve Cüzdanı Korumak İçin)
 # =================================================================
@@ -18,6 +19,7 @@ st_autorefresh(interval=30000, key="bot_refresh")
 class BotMerkezi:
     def __init__(self):
         self.cuzdan = {"USDT": 500000.0, "VARLIKLAR": {}}
+        self.maliyetler = {}  # 🔥 YENİ: Alış maliyetlerini izlemek için eklenen havuz
         self.loglar = ["🚀 Otomatik Bot Sistemi Başlatıldı!"]
         self.takip_listesi = ["BTC/USDT", "ETH/USDT", "TSLA", "GC=F"]
         # Sunucu Amerika'da olduğu için engelsiz Kraken borsasını kullanıyoruz
@@ -61,8 +63,7 @@ class BotMerkezi:
         except:
             return "❔ VERİ YOK"
 
-    # 🔥 KENDİ İNDİKATÖRÜNÜ GRAFİĞE EKLEME ALANI
-    # Bu fonksiyon grafik ekranına basılacak olan veri tablosunu hazırlar.
+    # 🖼️ Grafik Çizimi İçin Geçmiş Veriyi Çeken Fonksiyon
     def grafik_verisi_al(self, sembol):
         try:
             if "/" in sembol:
@@ -73,11 +74,9 @@ class BotMerkezi:
             else:
                 df = yf.Ticker(sembol).history(period="1d", interval="5m").rename(columns={"Close":"Fiyat"})
             
-            # Kendi indikatör seviyelerini burada hesaplayıp tabloya ekliyoruz:
             df['Scalp EMA 5'] = df['Fiyat'].ewm(span=5, adjust=False).mean()
             df['Scalp EMA 13'] = df['Fiyat'].ewm(span=13, adjust=False).mean()
             
-            # 💡 İleride buraya df['BenimIndikatorum'] = ... yazarak grafiğe yeni çizgiler ekleyebilirsin!
             return df[['Fiyat', 'Scalp EMA 5', 'Scalp EMA 13']]
         except:
             return None
@@ -109,6 +108,7 @@ def arka_plan_motoru(bot_nesnesi):
                     miktar = islem_tutari / fiyat
                     bot_nesnesi.cuzdan["USDT"] -= islem_tutari
                     bot_nesnesi.cuzdan["VARLIKLAR"][sembol] = bot_nesnesi.cuzdan["VARLIKLAR"].get(sembol, 0) + miktar
+                    bot_nesnesi.maliyetler[sembol] = bot_nesnesi.maliyetler.get(sembol, 0.0) + islem_tutari  # 🔥 Toplam harcanan USDT ekleniyor
                     bot_nesnesi.loglar.append(f"✅ [OTOMATİK AL]: {round(miktar,4)} adet {sembol} alındı. Fiyat: {fiyat} USDT")
 
             # Otomatik Satım Stratejisi
@@ -117,6 +117,7 @@ def arka_plan_motoru(bot_nesnesi):
                 toplam_gelir = miktar * fiyat
                 bot_nesnesi.cuzdan["USDT"] += toplam_gelir
                 bot_nesnesi.cuzdan["VARLIKLAR"][sembol] = 0
+                bot_nesnesi.maliyetler[sembol] = 0.0  # 🔥 Varlık satıldığı için maliyet sıfırlanıyor
                 bot_nesnesi.loglar.append(f"🚨 [OTOMATİK SAT]: Elindeki tüm {sembol} varlıkları satıldı. Gelir: {round(toplam_gelir,2)} USDT")
 
 if "motor_calisiyor" not in st.session_state:
@@ -140,7 +141,26 @@ with col1:
         aktif_varlik_var_mi = False
         for varlik, miktar in bot.cuzdan["VARLIKLAR"].items():
             if miktar > 0:
-                st.write(f"**{varlik}:** `{round(miktar, 4)}` adet")
+                # Canlı Kâr/Zarar Hesaplama Segmenti
+                fiyat = bot.fiyat_al(varlik)
+                guncel_deger = miktar * fiyat
+                toplam_maliyet = bot.maliyetler.get(varlik, 0.0)
+                
+                # Hafıza yenilenmeden önce alınan eski simülasyon varlıkları için koruma filtresi
+                if toplam_maliyet == 0.0:
+                    toplam_maliyet = guncel_deger
+                
+                kar_zarar = guncel_deger - toplam_maliyet
+                kar_zarar_yuzde = (kar_zarar / toplam_maliyet) * 100 if toplam_maliyet > 0 else 0
+                
+                # Dinamik Renk ve Gösterge Ayarı
+                renk = "#00cc66" if kar_zarar >= 0 else "#ff3333"
+                ok = "🔺" if kar_zarar >= 0 else "🔻"
+                
+                st.markdown(f"**{varlik}**")
+                st.write(f"Adet: `{round(miktar, 4)}` | Değer: `{round(guncel_deger, 2)} USDT`")
+                st.markdown(f"<span style='color:{renk}; font-weight:bold;'>{ok} K/Z: {round(kar_zarar, 2)} USDT ({round(kar_zarar_yuzde, 2)}%)</span>", unsafe_allow_html=True)
+                st.markdown("<hr style='margin:10px 0; border:0; border-top:1px solid #444;'/>", unsafe_allow_html=True)
                 aktif_varlik_var_mi = True
         if not aktif_varlik_var_mi:
             st.caption("Henüz alım yapılmış bir varlık bulunmuyor.")
@@ -155,7 +175,6 @@ with col1:
             st.rerun()
 
 with col2:
-    # 👑 PREMIUM TAB TASARIMI
     tab1, tab2, tab3 = st.tabs(["📈 Canlı Sinyal Masası", "🔍 Gelişmiş Grafik Paneli", "📜 İşlem Günlüğü (Logs)"])
 
     with tab1:
@@ -198,7 +217,6 @@ with col2:
             with st.spinner("Piyasa ve indikatör verileri işleniyor..."):
                 g_data = bot.grafik_verisi_al(secilen_grafik)
                 if g_data is not None and not g_data.empty:
-                    # 💡 Burası hem fiyatı hem de EMA 5 ve EMA 13 indikatör çizgilerini aynı grafikte üst üste çizer!
                     st.line_chart(g_data, use_container_width=True)
                     st.caption("💡 *Grafikteki çizgiler: Ham Fiyat seviyenizi ve hesaplanan Scalp İndikatörlerinizin (EMA5 / EMA13) çakışma bölgelerini temsil eder.*")
                 else:
