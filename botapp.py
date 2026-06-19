@@ -17,8 +17,8 @@ class BotMerkezi:
         self.cuzdan = {"USDT": 500000.0, "VARLIKLAR": {}}
         self.loglar = ["🚀 Otomatik Bot Sistemi Başlatıldı!"]
         self.takip_listesi = ["BTC/USDT", "ETH/USDT", "TSLA", "GC=F"]
-        # Binance yerine Amerika IP'lerine açık olan Kraken borsasını bağlıyoruz:
-        self.binance = ccxt.kraken() 
+        # Sunucu Amerika'da olduğu için Binance yerine Kraken kullanıyoruz:
+        self.binance = ccxt.kraken()
 
     def rsi_hesapla(self, seri, periyot=14):
         delta = seri.diff()
@@ -44,6 +44,9 @@ class BotMerkezi:
             if "/" in sembol: return self.binance.fetch_ticker(sembol)['last']
             return yf.Ticker(sembol).history(period="1d")['Close'].iloc[-1]
         except: return 0
+
+# Hafıza Nesnesini Çağır
+bot = BotMerkezi()
 
 # =================================================================
 # 🤖 7/24 ARKA PLAN MOTORU (Thread Kontrolü)
