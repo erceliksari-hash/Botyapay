@@ -17,11 +17,9 @@ st_autorefresh(interval=30000, key="bot_refresh")
 # =================================================================
 # 📐 İNDİKATÖR FONKSİYONLARI (pandas_ta yerine elle hesaplama)
 # -----------------------------------------------------------------
-# DÜZELTME: pandas_ta kütüphanesi güncel numpy sürümleriyle
-# (numpy >= 1.24) uyumsuz olduğu için ImportError ile uygulamayı
-# tamamen çökertiyordu (numpy.NaN artık mevcut değil).
-# Bu yüzden EMA ve Stochastic indikatörleri sade pandas ile
-# elle hesaplanıyor; harici bağımlılık riski ortadan kalkıyor.
+# pandas_ta kütüphanesi güncel numpy/pandas sürümleriyle uyumsuz
+# olduğu için (ModuleNotFoundError / ImportError) tamamen kaldırıldı.
+# EMA ve Stochastic indikatörleri sade pandas ile elle hesaplanıyor.
 # =================================================================
 def ema_hesapla(seri, periyot):
     return seri.ewm(span=periyot, adjust=False).mean()
@@ -30,7 +28,7 @@ def ema_hesapla(seri, periyot):
 def stochastic_k_hesapla(high, low, close, k=14, smooth_k=3):
     en_dusuk = low.rolling(window=k).min()
     en_yuksek = high.rolling(window=k).max()
-    aralik = (en_yuksek - en_dusuk).replace(0, pd.NA)  # 0'a bölme hatasını engelle
+    aralik = (en_yuksek - en_dusuk).replace(0, pd.NA)
     ham_k = 100 * (close - en_dusuk) / aralik
     return ham_k.rolling(window=smooth_k).mean()
 
@@ -44,24 +42,46 @@ def rsi_hesapla(seri, periyot=14):
 
 
 # =================================================================
+# 🔧 SEMBOL NORMALİZASYONU
+# -----------------------------------------------------------------
+# DÜZELTME: Kullanıcı "SOL" veya "ADA" gibi kripto sembollerini
+# "/USDT" eklemeden girdiğinde, kod bunu hisse senedi zannedip
+# Yahoo Finance'tan sürekli "possibly delisted" hatası alıyordu.
+# Bilinen kripto kısaltmaları otomatik olarak "/USDT" ekleniyor.
+# =================================================================
+BILINEN_KRIPTOLAR = {
+    "BTC", "ETH", "SOL", "ADA", "XRP", "DOGE", "BNB", "DOT", "MATIC",
+    "LTC", "AVAX", "LINK", "TRX", "SHIB", "ATOM", "UNI", "XLM", "ETC",
+    "FIL", "APT", "ARB", "OP", "NEAR", "ICP", "AAVE", "SAND", "MANA",
+    "FTM", "ALGO", "USDT", "USDC",
+}
+
+
+def sembol_normalize(sembol):
+    sembol = sembol.strip().upper()
+    if "/" not in sembol and sembol in BILINEN_KRIPTOLAR and sembol not in ("USDT", "USDC"):
+        return f"{sembol}/USDT"
+    return sembol
+
+
+# =================================================================
 # 🧠 KÜRESEL HAFIZA (Botun Durumunu ve Cüzdanı Korumak İçin)
 # =================================================================
 @st.cache_resource
 class BotMerkezi:
     def __init__(self):
         self.cuzdan = {"USDT": 500000.0, "VARLIKLAR": {}}
-        self.maliyetler = {}  # Alış maliyetlerini izlemek için havuz
+        self.maliyetler = {}
         self.loglar = ["🚀 Otomatik Bot Sistemi Başlatıldı!"]
-        self.takip_listesi = ["BTC/USDT", "ETH/USDT", "TSLA", "GC=F"]
+        # Varsayılan listedeki semboller de normalize ediliyor
+        self.takip_listesi = [
+            sembol_normalize(s) for s in ["BTC/USDT", "ETH/USDT", "TSLA", "GC=F"]
+        ]
         # Sunucu Amerika'da olduğu için engelsiz Kraken borsasını kullanıyoruz
-        # DÜZELTME: enableRateLimit eklendi -> API hız sınırı / ban riski azaltıldı
         self.binance = ccxt.kraken({"enableRateLimit": True})
 
-        # DÜZELTME: Arka plan motorunun sadece BİR KEZ başlatılmasını
-        # garanti etmek için bot nesnesinin kendi üzerinde durum ve kilit tutuluyor.
-        # (Önceden st.session_state kullanılıyordu; bu, her yeni sekme/oturum
-        # için ayrı bir thread başlatıp aynı paylaşılan cüzdanı eşzamanlı
-        # değiştirme riski oluşturuyordu.)
+        # Arka plan motorunun sadece BİR KEZ başlatılmasını garanti etmek
+        # için durum ve kilit bot nesnesinin kendi üzerinde tutuluyor.
         self.motor_baslatildi = False
         self.kilit = threading.Lock()
 
@@ -92,7 +112,6 @@ class BotMerkezi:
             else:
                 return "⚪ BEKLE"
         except Exception as e:
-            # DÜZELTME: Sessiz "except:" yerine hata loglara yazılıyor
             self.log_ekle(f"⚠️ [analiz_et hata] {sembol}: {e}")
             return "❔ VERİ YOK"
 
@@ -193,7 +212,7 @@ bot = BotMerkezi()
 # =================================================================
 def arka_plan_motoru(bot_nesnesi):
     while True:
-        time.sleep(15)  # 15 saniyede bir piyasayı tara
+        time.sleep(15)
         for sembol in list(bot_nesnesi.takip_listesi):
             try:
                 karar = bot_nesnesi.analiz_et(sembol)
@@ -204,10 +223,7 @@ def arka_plan_motoru(bot_nesnesi):
                 with bot_nesnesi.kilit:
                     sahip_olunan = bot_nesnesi.cuzdan["VARLIKLAR"].get(sembol, 0)
 
-                    # Otomatik Alım Stratejisi
-                    # DÜZELTME: Sinyal "GÜÇLÜ AL" olarak kaldığı her 15 saniyede
-                    # tekrar tekrar 5000 USDT'lik alım yapılıyordu (nakit bitene kadar).
-                    # Artık zaten pozisyon varsa yeni alım yapılmıyor.
+                    # Zaten pozisyon varsa tekrar alım yapılmaz (DÜZELTME)
                     if "GÜÇLÜ AL" in karar and sahip_olunan == 0:
                         islem_tutari = 5000.0
                         if bot_nesnesi.cuzdan["USDT"] >= islem_tutari:
@@ -223,7 +239,6 @@ def arka_plan_motoru(bot_nesnesi):
                                 f"✅ [OTOMATİK AL]: {round(miktar, 4)} adet {sembol} alındı. Fiyat: {fiyat} USDT"
                             )
 
-                    # Otomatik Satım Stratejisi
                     elif "GÜÇLÜ SAT" in karar and sahip_olunan > 0:
                         miktar = sahip_olunan
                         toplam_gelir = miktar * fiyat
@@ -234,14 +249,11 @@ def arka_plan_motoru(bot_nesnesi):
                             f"🚨 [OTOMATİK SAT]: Elindeki tüm {sembol} varlıkları satıldı. Gelir: {round(toplam_gelir, 2)} USDT"
                         )
             except Exception as e:
-                # DÜZELTME: Arka plan motorunda yakalanmayan bir hata
-                # tüm thread'i sessizce öldürebiliyordu. Artık loglanıp devam ediliyor.
                 bot_nesnesi.log_ekle(f"⚠️ [arka_plan_motoru hata] {sembol}: {e}\n{traceback.format_exc()}")
 
 
-# DÜZELTME: Thread başlatma artık st.session_state üzerinden değil,
-# bot nesnesinin kendi kilidi ve bayrağı üzerinden kontrol ediliyor.
-# Böylece kaç tane sekme/oturum açılırsa açılsın motor sadece BİR KEZ başlar.
+# Thread başlatma -> bot nesnesinin kendi kilidi/bayrağı üzerinden kontrol
+# ediliyor. Kaç sekme/oturum açılırsa açılsın motor sadece BİR KEZ başlar.
 with bot.kilit:
     if not bot.motor_baslatildi:
         bot.motor_baslatildi = True
@@ -253,7 +265,6 @@ with bot.kilit:
 # =================================================================
 st.subheader("🤖 BORSA AJANI PRO — Gelişmiş Algoritmik İşlem Paneli")
 
-# Düzen: Sol Panel (Cüzdan ve Kontroller) | Sağ Panel (Görsel Sekmeler)
 col1, col2 = st.columns([1, 3], gap="large")
 
 with col1:
@@ -290,19 +301,24 @@ with col1:
 
     st.write("---")
     st.markdown("### ➕ İzleme Listesine Ekle")
-    yeni_sembol = st.text_input("Örn: AAPL, TSLA veya SOL/USDT", placeholder="Sembol girin...").upper()
-    if st.button("📌 Listeye Sabitle", use_container_width=True) and yeni_sembol:
+    st.caption("Kripto için sembol veya sadece kısaltma yazabilirsiniz (örn: SOL → otomatik SOL/USDT olur).")
+    yeni_sembol_ham = st.text_input("Örn: AAPL, TSLA veya SOL", placeholder="Sembol girin...")
+    # DÜZELTME: use_container_width yerine width='stretch' kullanılıyor (deprecated uyarısı)
+    if st.button("📌 Listeye Sabitle", width="stretch") and yeni_sembol_ham:
+        yeni_sembol = sembol_normalize(yeni_sembol_ham)
         if yeni_sembol not in bot.takip_listesi:
             bot.takip_listesi.append(yeni_sembol)
             st.success(f"{yeni_sembol} listeye eklendi!")
             st.rerun()
+        else:
+            st.warning(f"{yeni_sembol} zaten listede.")
 
 with col2:
     tab1, tab2, tab3 = st.tabs(["📈 Canlı Sinyal Masası", "🔍 Gelişmiş Grafik Paneli", "📜 İşlem Günlüğü (Logs)"])
 
     with tab1:
         st.markdown("### ⚡ Anlık Piyasa Taraması")
-        if st.button("🔄 Verileri Şimdi Güncelle", use_container_width=True):
+        if st.button("🔄 Verileri Şimdi Güncelle", width="stretch"):
             st.rerun()
 
         piyasa_verileri = []
@@ -327,7 +343,7 @@ with col2:
         df_goster = pd.DataFrame(piyasa_verileri)
         st.dataframe(
             df_goster,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "Grafik Linki": st.column_config.LinkColumn("🔗 Analiz", display_text="TradingView Grafiği")
@@ -393,7 +409,8 @@ with col2:
                         margin=dict(l=20, r=20, t=20, b=20),
                     )
 
-                    st.plotly_chart(fig, use_container_width=True)
+                    # DÜZELTME: use_container_width yerine width='stretch'
+                    st.plotly_chart(fig, width="stretch")
                     st.caption(
                         "💡 *Grafikteki üçgenler: 50 EMA ve Stochastic (14,3,3) kesişiminden üretilen scalp sinyal noktalarıdır.*"
                     )
@@ -411,3 +428,4 @@ with col2:
                 st.error(log)
             else:
                 st.info(log)
+
