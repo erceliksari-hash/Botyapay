@@ -4,10 +4,13 @@ import pandas as pd
 import yfinance as yf
 import threading
 import time
+from streamlit_autorefresh import st_autorefresh  # <-- 7. SATIRA BU GELİYOR
 
 # Sayfa Genişlik ve Tema Ayarı
 st.set_page_config(layout="wide", page_title="Borsa Ajanı Pro v2", page_icon="📊")
 
+# 🔄 EKRANI HER 30 SANİYEDE BİR OTOMATİK YENİLE (30000 milisaniye)
+st_autorefresh(interval=30000, key="bot_refresh")
 # =================================================================
 # 🧠 KÜRESEL HAFIZA (Botun Durumunu ve Cüzdanı Korumak İçin)
 # =================================================================
