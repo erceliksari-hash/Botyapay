@@ -163,11 +163,13 @@ with col1:
     toplam_varlik_degeri = 0.0
     toplam_portfoy_maliyeti = 0.0
     
-    for varlik, miktar in bot.cuzdan["VARLIKLAR"].items():
+    # Ekranda donma olmaması için güncel fiyatları tek seferde çekip listeliyoruz
+    for varlik, miktar in list(bot.cuzdan["VARLIKLAR"].items()):
         if miktar > 0:
             fiyat = bot.fiyat_al(varlik)
-            toplam_varlik_degeri += miktar * fiyat
-            toplam_portfoy_maliyeti += bot.maliyetler.get(varlik, 0.0)
+            if fiyat > 0:
+                toplam_varlik_degeri += miktar * fiyat
+                toplam_portfoy_maliyeti += bot.maliyetler.get(varlik, 0.0)
             
     # Toplam Cüzdan Bakiyesi = Boştaki Nakit (USDT) + Açık Pozisyonların Anlık Değeri
     toplam_bakiye = bot.cuzdan["USDT"] + toplam_varlik_degeri
@@ -184,9 +186,11 @@ with col1:
     
     with st.expander("📦 Sahip Olunan Varlıklar", expanded=True):
         aktif_varlik_var_mi = False
-        for varlik, miktar in bot.cuzdan["VARLIKLAR"].items():
+        for varlik, miktar in list(bot.cuzdan["VARLIKLAR"].items()):
             if miktar > 0:
                 fiyat = bot.fiyat_al(varlik)
+                if fiyat == 0:
+                    continue
                 guncel_deger = miktar * fiyat
                 toplam_maliyet = bot.maliyetler.get(varlik, 0.0)
                 
@@ -202,112 +206,4 @@ with col1:
                 st.markdown(f"**{varlik}**")
                 st.write(f"Adet: `{round(miktar, 4)}` | Değer: `{round(guncel_deger, 2)} USDT`")
                 st.markdown(f"<span style='color:{renk}; font-weight:bold;'>{ok} K/Z: {round(kar_zarar, 2)} USDT ({round(kar_zarar_yuzde, 2)}%)</span>", unsafe_allow_html=True)
-                st.markdown("<hr style='margin:10px 0; border:0; border-top:1px solid #444;'/>", unsafe_allow_html=True)
-                aktif_varlik_var_mi = True
-        if not aktif_varlik_var_mi:
-            st.caption("Henüz alım yapılmış bir varlık bulunmuyor.")
-
-    st.write("---")
-    st.markdown("### ➕ İzleme Listesine Ekle")
-    yeni_sembol = st.text_input("Örn: AAPL, TSLA eller SOL/USDT", placeholder="Sembol girin...").upper()
-    if st.button("📌 Listeye Sabitle", use_container_width=True) and yeni_sembol:
-        if yeni_sembol not in bot.takip_listesi:
-            bot.takip_listesi.append(yeni_sembol)
-            st.success(f"{yeni_sembol} listeye eklendi!")
-            st.rerun()
-
-with col2:
-    tab1, tab2, tab3 = st.tabs(["📈 Canlı Sinyal Masası", "🔍 Gelişmiş Grafik Paneli", "📜 İşlem Günlüğü (Logs)"])
-
-    with tab1:
-        st.markdown("### ⚡ Anlık Piyasa Taraması")
-        if st.button("🔄 Verileri Şimdi Güncelle", use_container_width=True):
-            st.rerun()
-
-        piyasa_verileri = []
-        for s in bot.takip_listesi:
-            ana_sinyal = bot.analiz_et(s)
-            scalp_sinyal = bot.scalp_analiz_et(s)
-            fiyat = bot.fiyat_al(s)
-            
-            tv_id = s.replace("/USDT", "USDT")
-            tv_link = f"https://www.tradingview.com/symbols/{tv_id}/"
-            
-            piyasa_verileri.append({
-                "Sembol": s, 
-                "Anlık Fiyat (USDT)": round(fiyat, 2), 
-                "Ana Trend (1h)": ana_sinyal,
-                "Scalp Durumu (5m)": scalp_sinyal,
-                "Grafik Linki": tv_link
-            })
-        
-        df_goster = pd.DataFrame(piyasa_verileri)
-        st.dataframe(
-            df_goster, 
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Grafik Linki": st.column_config.LinkColumn("🔗 Analiz", display_text="TradingView Grafiği")
-            }
-        )
-
-    with tab2:
-        st.markdown("### 📊 İndikatörlü Canlı Mum Grafiği")
-        secilen_grafik = st.selectbox("İncelemek istediğiniz finansal varlığı seçin:", bot.takip_listesi)
-        
-        if secilen_grafik:
-            with st.spinner("Piyasa, Mum çubukları ve indikatörler işleniyor..."):
-                g_data = bot.grafik_verisi_al(secilen_grafik)
-                if g_data is not None and not g_data.empty:
-                    
-                    fig = go.Figure()
-                    
-                    # 1. Mum Çubukları (Candlesticks)
-                    fig.add_trace(go.Candlestick(
-                        x=g_data.index, open=g_data['Open'], high=g_data['High'],
-                        low=g_data['Low'], close=g_data['Close'], name="Fiyat"
-                    ))
-                    
-                    # 2. Pine Script Trend Filtresi (EMA 50)
-                    fig.add_trace(go.Scatter(
-                        x=g_data.index, y=g_data['EMA 50'], 
-                        line=dict(color='orange', width=1.5), name="50 EMA"
-                    ))
-                    
-                    # 3. AL Sinyali İşaretçileri (Yeşil Oklar)
-                    buys = g_data[g_data['Buy_Signal']]
-                    fig.add_trace(go.Scatter(
-                        x=buys.index, y=buys['Close'] * 0.995, 
-                        mode='markers', marker=dict(symbol='triangle-up', size=12, color='#00cc66'),
-                        name="Ajan AL"
-                    ))
-                    
-                    # 4. SAT Sinyali İşaretçileri (Kırmızı Oklar)
-                    sells = g_data[g_data['Sell_Signal']]
-                    fig.add_trace(go.Scatter(
-                        x=sells.index, y=sells['Close'] * 1.005, 
-                        mode='markers', marker=dict(symbol='triangle-down', size=12, color='#ff3333'),
-                        name="Ajan SAT"
-                    ))
-                    
-                    fig.update_layout(
-                        xaxis_rangeslider_visible=False,
-                        template="plotly_dark",
-                        height=500,
-                        margin=dict(l=20, r=20, t=20, b=20)
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                    st.caption("💡 *Grafikteki üçgenler: Gönderdiğiniz Pine Script kodunun (50 EMA ve Stochastic 14,3,3) ürettiği gerçek scalp kesişim noktalarıdır.*")
-                else:
-                    st.error("Grafik verisi alınamadı. Sembolün doğruluğunu veya internet bağlantısını kontrol edin.")
-
-    with tab3:
-        st.markdown("### 📜 Robotun Son Karar Mekanizmaları")
-        for log in reversed(bot.loglar[-20:]):
-            if "AL" in log:
-                st.success(log)
-            elif "SAT" in log:
-                st.error(log)
-            else:
-                st.info(log)
+                st.markdown("<hr style='margin:10px 0; border:0; border-top:1
