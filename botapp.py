@@ -1,10 +1,20 @@
+import os
+import sys
+import subprocess
+
+# pandas_ta uyumluluğu için dinamik kontrol ve hata önleme mekanizması
+try:
+    import pandas_ta as ta
+except ModuleNotFoundError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "pandas-ta"])
+    import pandas_ta as ta
+
 import streamlit as st
 import ccxt
 import pandas as pd
 import yfinance as yf
 import threading
 import time
-import pandas_ta as ta  
 import plotly.graph_objects as go  
 from streamlit_autorefresh import st_autorefresh
 
